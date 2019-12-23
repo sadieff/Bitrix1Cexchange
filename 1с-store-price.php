@@ -12,12 +12,15 @@ define("CATALOG_IBLOCK_ID", "1"); // ID инфоблока основного к
 define("IBLOCK_ID_1C", "2"); // ID инфоблока, в который грузятся товары из 1С
 
 $arStorageMask = array( // массив со складами, которые необходимо учитывать
-    "b18c099c-ac20-11e8-a2ca-0050569302c3", // Склад НША-Ростов-на-Дону (Рос-Дон М)
-    "a6065ab6-cf92-11e3-9182-00505693408f", // Склад НША-Уфа
-    "08e1651a-d7eb-11e6-9d37-005056931833", // Склад НША-Новосибирск (ШинКарго)
-    "1760cf9f-e9fe-11e6-91a1-005056931833", // Склад НША-Липецк (АСШ)
-    "8396453b-297c-11e6-ab05-00505693408f", // Склад НША-Пермь (ИСТК)
-    "a6065ab7-cf92-11e3-9182-00505693408f", // Склад НША-Обухово 2
+    "a6065ab7-cf92-11e3-9182-00505693408f" => "STORAGE_OBUHOVO", // Склад НША-Обухово 2
+    "a6065ab4-cf92-11e3-9182-00505693408f" => "STORAGE_NEVA", // Склад НША-Нева
+    "cc450053-6d48-11e7-a2ba-0050569302c3" => "STORAGE_ROSTOV", // Склад НША-Ростов (ИП Каракушьян)
+    "a6065aaa-cf92-11e3-9182-00505693408f" => "STORAGE_KUBAN", // Склад НША-Кубань
+    "1760cf9f-e9fe-11e6-91a1-005056931833" => "STORAGE_LIPECK", // Склад НША-Липецк (АСШ)
+    "8396453b-297c-11e6-ab05-00505693408f" => "STORAGE_PERM", // Склад НША-Пермь (ИСТК)
+    "a6065ab6-cf92-11e3-9182-00505693408f" => "STORAGE_UFA", // Склад НША-Уфа
+    "08e1651a-d7eb-11e6-9d37-005056931833" => "STORAGE_NOVOSIB", // Склад НША-Новосибирск (ШинКарго)
+    "08e1651a-d7eb-11e6-9d37-005056931833" => "STORAGE_NOVOCUZ", // Склад НША-Новосибирск (ШинКарго)
 );
 
 CModule::IncludeModule("iblock");
@@ -37,7 +40,7 @@ $requestElements  = $blockElement::GetList(
     array("IBLOCK_ID" => CATALOG_IBLOCK_ID),
     false,
     false,
-    array("ID", "CATALOG_GROUP_1", "PROPERTY_CML2_ARTICLE")
+    array("ID", "IBLOCK_ID", "CATALOG_GROUP_1", "PROPERTY_CML2_ARTICLE")
 );
 $products = [];
 while ($element = $requestElements -> GetNextElement()) {
@@ -78,8 +81,11 @@ foreach ($xml->Каталог->Товары->Товар as $arProduct) {
     $articul = strval($arProduct->Артикул);
     $id = strval($arProduct->Ид);
 
+    /* Проставляем цену */
+
     if(empty($products[$articul]["ID"])) {
         $priceResult = "Товар не найден";
+        continue;
     }
     else if(empty($products[$articul]["PRICE"])) {
 
@@ -116,10 +122,49 @@ foreach ($xml->Каталог->Товары->Товар as $arProduct) {
         $priceResult = "Пропущен";
     }
 
+    /* проставляем склады */
+
+    /* посчитаем количество товара на складах */
+
+    $storageCount = 0;
+    $propertyElement = []; // массив свойство => значение для записи в доп поля
+    foreach($arrOffers[$id]["storage"] as $keyStorage => $arStorage) { /* подсчитаем общее количество */
+        $priperty = [];
+        if(!empty($arStorageMask[$keyStorage]))  {
+            $storageCount = $storageCount + $arStorage; // общая сумма на складах
+            $priperty[$arStorageMask[$keyStorage]] = $arStorage; // добавим количество в массив $priperty для записи в свойства
+        }
+        if(!empty($priperty)) {
+            $blockElement->SetPropertyValuesEx($products[$articul]["ID"], CATALOG_IBLOCK_ID, $priperty); // запишем в массив TODO: оптимизировать: проверять, нужно обновлять или нет
+        }
+    }
+
+    /* Добавим количество в товар */
+    $storageID = false;
+    $requestStorage = CCatalogStoreProduct::GetList( array(), array( "PRODUCT_ID" => $products[$articul]["ID"], "STORE_ID" => 1 ) );
+    if ($arrStorage = $requestStorage->Fetch()) $storageID = $arrStorage["ID"];
+
+    $arFieldsStorage = Array(
+        "PRODUCT_ID" => $products[$articul]["ID"],
+        "STORE_ID" => 1,
+        "AMOUNT" => $storageCount,
+    );
+    if ( $storageID ) {
+        CCatalogStoreProduct::Update($storageID, $arFieldsStorage);
+        CCatalogProduct::add(array("ID" => $products[$articul]["ID"], "QUANTITY" => $storageCount));
+        $storageResult = "Обновлено";
+    }
+    else {
+        CCatalogStoreProduct::Add($arFieldsStorage);
+        CCatalogProduct::add(array("ID" => $products[$articul]["ID"], "QUANTITY" => $storageCount));
+        $storageResult = "Добавлено";
+    }
+
     echo "<tr>
                 <td>ID: ".$id."</td>
                 <td>Артикул: ".$articul."</td>
                 <td>Цена: ".$products[$articul]["ID"]." [".$priceResult."]</td>
+                <td>На складе: ".$storageCount." шт. [".$storageResult."]</td>
           </tr>";
     $counter++;
 }
